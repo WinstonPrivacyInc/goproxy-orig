@@ -25,6 +25,7 @@ import (
 	"context"
 	"github.com/winstonprivacyinc/dns"
 	"github.com/winston/shadownetwork"
+	"github.com/winstonprivacyinc/goproxy/plumb"
 	//"net/url"
 	"crypto/rand"
 	//"runtime/debug"
@@ -1119,8 +1120,9 @@ func (ctx *ProxyCtx) ForwardConnect() error {
 
 	//fmt.Println("[DEBUG] ForwardConnect() - Fusing client connection to host", ctx.host)
 
-	fuse(ctx.Conn, targetSiteConn, ctx.Host())
-	//Fuse2(ctx.Conn, targetSiteConn)
+	plumb.Fit(ctx.Conn, targetSiteConn)
+	ctx.Conn.Close()
+	targetSiteConn.Close()
 
 	//fmt.Println("[DEBUG] ForwardConnect() completed.")
 	return nil
@@ -1240,8 +1242,9 @@ func (ctx *ProxyCtx) ForwardNonHTTPRequest(host string) error {
 	// Tunnel the connections together and block until they close.
 	//fuse(ctx.Conn, spyconnection, ctx.Host())
 
-	fuse(ctx.Conn, targetSiteConn, ctx.Host())
-
+	plumb.Fit(ctx.Conn, targetSiteConn)
+	ctx.Conn.Close()
+	targetSiteConn.Close()
 
 	return nil
 }
