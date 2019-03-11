@@ -1,4 +1,4 @@
-module github.com/winstonprivacyllc/goproxy
+module github.com/winstonprivacyinc/goproxy
 
 go 1.12
 
