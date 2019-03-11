@@ -1,0 +1,70 @@
+package plumb
+
+import (
+	"io"
+	"net"
+	"time"
+)
+
+// RLS 9/6/2018 - Cleaner method to pipe two conns together.
+// Fuse connections together. Have to take precautions to close connections down in various cases.
+// 9/16/2018 - Requests which are proxied by static.deploy.akamaitechnologies.com and a few other sites hang here forever.
+// It's unclear why this is happening but we've been able to reproduce the fact that the timeouts are not honored in these
+// cases. To ensure these connections close down, callers should set and close the Request.Cancel channel after some time limit.
+func fuse(client, backend net.Conn, debug string) {
+	// Copy from client -> backend, and from backend -> client
+
+	defer client.Close()
+	defer backend.Close()
+
+	// Pipes data from the remote server to our client
+	backenddie := make(chan struct{})
+	go func() {
+		// TODO: Idle connection should only fire if both connections are idle. If one side is
+		// sending data, then we shouldn't close it.
+
+		// Wrap the backend connection so that we can enforce an idle timeout (60 seconds)
+		idleconn := &IdleTimeoutConn{Conn: backend, IdleTimeout: connectionIdleTimeout}
+
+		// Connections cannot stay open longer than this period of time (15 minutes)
+		idleconn.SetDeadline(time.Now().Add(time.Duration(serverReadTimeout) * time.Second))
+
+		copyData(client, idleconn)
+
+		close(backenddie)
+	}()
+
+	// Pipes data from our client to the remote server
+	clientdie := make(chan struct{})
+	go func() {
+		// Set read timeout
+		// With HTTP/S requests, we expect these to complete quickly. However, websockets and other protocols
+		// may need to keep the connection open more or less indefinitely.
+		//client.SetReadDeadline(time.Now().Add(clientReadTimeout * time.Second))
+
+		idleconn := &IdleTimeoutConn{
+			Conn:        client,
+			IdleTimeout: connectionIdleTimeout,
+			Deadline:    time.Now().Add(time.Duration(clientReadTimeout) * time.Second)}
+
+		copyData(backend, idleconn)
+
+		close(clientdie)
+	}()
+
+	// Wait for both connections to close before shutting the tunnel down. Otherwise we can end up
+	// in a race condition where the client request ends and shuts the tunnel down.
+	<-backenddie
+	<-clientdie
+
+}
+
+// Copy data between two connections
+func copyData(dst net.Conn, src net.Conn) (int64, error) {
+	defer dst.Close()
+	defer src.Close()
+
+	n, err := io.Copy(dst, src)
+
+	return n, err
+}
