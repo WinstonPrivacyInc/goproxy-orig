@@ -5,30 +5,28 @@ package goproxy
 import (
 	"bufio"
 	"bytes"
-	"github.com/inconshreveable/go-vhost"
-	"github.com/winstonprivacyinc/winston/goproxy/har"
+	"context"
+	"crypto/md5"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-	//"github.com/peterbourgon/diskv"
-	"context"
-	"crypto/md5"
-	"encoding/hex"
-	"fmt"
-	"github.com/winstonprivacyinc/go-conntrack"
-	"strconv"
 	"time"
-	//"crypto/tls"
+	"unicode"
+
+	vhost "github.com/inconshreveable/go-vhost"
+	conntrack "github.com/winstonprivacyinc/go-conntrack"
+	"github.com/winstonprivacyinc/winston/goproxy/har"
 	"github.com/winstonprivacyinc/winston/shadownetwork"
-	//"crypto/x509"
-	//"github.com/valyala/fasthttp/fasthttputil"
-	"io"
-	"io/ioutil"
 )
 
 // The basic proxy type. Implements http.Handler.
@@ -308,6 +306,44 @@ func (proxy *ProxyHttpServer) ListenAndServe(addr string) error {
 	}
 }
 
+func SanitizeCipherSignature(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+
+	b := strings.Builder{}
+	maxwords := 5
+	words := func() []string {
+		rc := []string{}
+		for _, r := range s {
+			r = unicode.ToLower(unicode.SimpleFold(r))
+			switch {
+			case unicode.IsLetter(r) || unicode.IsDigit(r):
+				b.WriteRune(r)
+			default:
+				// we found a non-letter or digit character so
+				if b.Len() > 0 {
+					rc = append(rc, b.String())
+					b.Reset()
+				}
+			}
+		}
+
+		// if there is any data left in our buffer, append it to the slice
+		if b.Len() > 0 {
+			rc = append(rc, b.String())
+		}
+
+		// clamp results to maxwords
+		if len(rc) > maxwords {
+			rc = rc[:maxwords]
+		}
+		return rc
+	}
+
+	return strings.Join(words(), "-")
+}
+
 // Expects a parsed request object, connection and a response writer. Will forward the connection to the original
 // destination (found in r.Host). If CONNECT, it will simply open a connection and the client must
 // negotiate it. Otherwise, it will replay the original request to the upstream server and pipe
@@ -346,12 +382,7 @@ func (proxy *ProxyHttpServer) HandleHTTPConnection(c net.Conn, r *http.Request, 
 	// Set up host and port
 	ctx.host = r.Host
 
-	ctx.CipherSignature = func() string {
-		if ua := r.Header.Get("User-Agent"); ua != "" {
-			return ua
-		}
-		return "*unknown-http-client*"
-	}()
+	ctx.CipherSignature = SanitizeCipherSignature(r.Header.Get("User-Agent"))
 
 	if ctx.host == "" {
 		// Fail safe. Should we ever get here?
@@ -659,7 +690,7 @@ func (proxy *ProxyHttpServer) ListenAndServeTLS(httpsAddr string) error {
 					// failed TLS queries on a per-client basis.
 					return GenerateSignature(tlsConn.ClientHelloMsg, false)
 				}
-				return "*unknown-tls-client*"
+				return "unknown"
 			}()
 
 			// TEST
