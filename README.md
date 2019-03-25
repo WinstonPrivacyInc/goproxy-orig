@@ -1,3 +1,5 @@
+# DEPRECATED - DO NOT USE
+
 # Introduction
 
 NOTICE: this is a fork of the original `elazarl/goproxy` with some radical API changes. - abourget
